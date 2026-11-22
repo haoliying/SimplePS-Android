@@ -49,6 +49,31 @@ object FontRenderer {
         Typeface.DEFAULT
     }
 
+    /** 检测字体能否渲染 text 中的字形；中文用「两个不同汉字渲染是否相同」判断。 */
+    fun fontHasChars(path: String?, text: String): Boolean {
+        if (path.isNullOrEmpty()) return true
+        val chars = text.filter { !it.isWhitespace() }
+        if (chars.isEmpty()) return true
+        val tf = try { Typeface.createFromFile(path) } catch (e: Exception) { return false }
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = tf; textSize = 32f }
+        fun sig(c: String): Pair<Int, Int> {
+            val w = max(2, paint.measureText(c).toInt())
+            val h = 48
+            val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val cv = Canvas(b)
+            cv.drawText(c, 0f, 32f, paint)
+            val px = IntArray(w * h); b.getPixels(px, 0, w, 0, 0, w, h)
+            var hash = 0; var count = 0
+            for (v in px) { hash = hash * 31 + Color.alpha(v); if (Color.alpha(v) > 0) count++ }
+            return hash to count
+        }
+        val hanChars = chars.filter { it.code in 0x4e00..0x9fff }
+        if (hanChars.length >= 2 && hanChars[0] != hanChars[1]) {
+            if (sig(hanChars[0].toString()) == sig(hanChars[1].toString())) return false
+        }
+        return true
+    }
+
     /**
      * 渲染文字为透明背景位图。
      */
@@ -64,6 +89,8 @@ object FontRenderer {
         jitter: Float = 4f,
         angle: Float = 8f,
         seed: Int = 0,
+        padding: Int = 30,
+        rotateAngle: Float = 0f,
     ): Bitmap {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = typeface(fontPath)
@@ -76,8 +103,9 @@ object FontRenderer {
         val widths = lines.map { max(1f, paint.measureText(it)) }
         val fm = paint.fontMetrics
         val lineH = ceil(fm.descent - fm.ascent) + size * 0.3f
-        val w = ceil(widths.maxOrNull() ?: 100f).toInt() + 80
-        val h = ceil(lineH * lines.size).toInt() + 80
+        val pad = padding.coerceAtLeast(1)
+        val w = ceil(widths.maxOrNull() ?: 100f).toInt() + pad * 2
+        val h = ceil(lineH * lines.size).toInt() + pad * 2
         val bmp = Bitmap.createBitmap(w.coerceAtLeast(1), h.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
 
@@ -88,16 +116,16 @@ object FontRenderer {
             )
         }
 
-        val baseY = 30f - fm.ascent
+        val baseY = pad.toFloat() - fm.ascent
 
         if (strokeWidth > 0f) {
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = strokeWidth
             paint.color = strokeColor
             if (!handwriting) {
-                lines.forEachIndexed { i, line -> canvas.drawText(line, 30f, baseY + i * lineH, paint) }
+                lines.forEachIndexed { i, line -> canvas.drawText(line, pad.toFloat(), baseY + i * lineH, paint) }
             } else {
-                drawHandwriting(canvas, lines, paint, 30f, baseY, lineH, jitter, angle, seed)
+                drawHandwriting(canvas, lines, paint, pad.toFloat(), baseY, lineH, jitter, angle, seed)
             }
         }
 
@@ -105,12 +133,20 @@ object FontRenderer {
         paint.color = color
         paint.setShadowLayer(size * 0.06f, size * 0.035f, size * 0.035f, Color.argb(110, 0, 0, 0))
         if (!handwriting) {
-            lines.forEachIndexed { i, line -> canvas.drawText(line, 30f, baseY + i * lineH, paint) }
+            lines.forEachIndexed { i, line -> canvas.drawText(line, pad.toFloat(), baseY + i * lineH, paint) }
         } else {
-            drawHandwriting(canvas, lines, paint, 30f, baseY, lineH, jitter, angle, seed)
+            drawHandwriting(canvas, lines, paint, pad.toFloat(), baseY, lineH, jitter, angle, seed)
         }
         paint.clearShadowLayer()
 
+        if (kotlin.math.abs(rotateAngle) > 0.01f) {
+            val m = android.graphics.Matrix().apply {
+                postRotate(rotateAngle, w / 2f, h / 2f)
+            }
+            val rotated = Bitmap.createBitmap(bmp, 0, 0, w, h, m, true)
+            bmp.recycle()
+            return rotated
+        }
         return bmp
     }
 

@@ -28,6 +28,8 @@ class OverlayView @JvmOverloads constructor(
     var rect: Rect? = null
     var onRectChanged: ((Rect?) -> Unit)? = null
     var onPlace: ((Int, Int) -> Unit)? = null
+    /** 无图片时点击画布的回调（用于直接选择图片）。 */
+    var onEmptyClick: (() -> Unit)? = null
 
     private var fgMask: Bitmap? = null
     private var bgMask: Bitmap? = null
@@ -84,6 +86,9 @@ class OverlayView @JvmOverloads constructor(
     /** 切换到可平移/缩放的浏览模式。 */
     fun enablePanMode() { mode = Mode.NONE; invalidate() }
 
+    private fun dp(v: Int): Float = v * resources.displayMetrics.density
+    private fun sp(v: Int): Float = v * resources.displayMetrics.scaledDensity
+
     private fun resetView() { userScale = 1f; panX = 0f; panY = 0f }
 
     private fun drawChecker(canvas: Canvas, dst: RectF) {
@@ -108,12 +113,43 @@ class OverlayView @JvmOverloads constructor(
         canvas.drawColor(Color.rgb(18, 20, 26))
         val src = source
         if (src == null) {
-            val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.rgb(141, 150, 166)
-                textSize = 42f
+            // 华为相册风格空状态：虚线框 + 加号圆圈 + 提示
+            val bw = (width * 0.72f).coerceAtMost(760f)
+            val bh = (height * 0.46f).coerceAtMost(460f)
+            val l = (width - bw) / 2f
+            val t = (height - bh) / 2f
+            val dashPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(70, 70, 76); style = Paint.Style.STROKE
+                strokeWidth = 3f
+            }
+            val dm = android.graphics.DashPathEffect(floatArrayOf(14f, 12f), 0f)
+            dashPaint.pathEffect = dm
+            canvas.drawRect(RectF(l, t, l + bw, t + bh), dashPaint)
+            dashPaint.pathEffect = null
+
+            val cx = width / 2f
+            val cy = t + bh / 2f - dp(28)
+            val circle = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(10, 132, 255); style = Paint.Style.STROKE; strokeWidth = 6f
+            }
+            canvas.drawCircle(cx, cy, dp(38), circle)
+            val plus = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(10, 132, 255); style = Paint.Style.STROKE
+                strokeWidth = 6f; strokeCap = Paint.Cap.ROUND
+            }
+            canvas.drawLine(cx - dp(18), cy, cx + dp(18), cy, plus)
+            canvas.drawLine(cx, cy - dp(18), cx, cy + dp(18), plus)
+
+            val title = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(242, 242, 247); textSize = sp(17)
+                textAlign = Paint.Align.CENTER; isFakeBoldText = true
+            }
+            canvas.drawText("点击此处选择图片", cx, t + bh - dp(60), title)
+            val sub = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(152, 152, 159); textSize = sp(12)
                 textAlign = Paint.Align.CENTER
             }
-            canvas.drawText("点击「选择图片」开始", width / 2f, height / 2f, p)
+            canvas.drawText("支持 PNG / JPG / BMP / WebP", cx, t + bh - dp(30), sub)
             return
         }
 
@@ -155,7 +191,12 @@ class OverlayView @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val src = source ?: return false
+        val src = source
+        if (src == null) {
+            // 无图片时点击画布 -> 选择图片
+            if (event.actionMasked == MotionEvent.ACTION_UP) onEmptyClick?.invoke()
+            return true
+        }
 
         when (event.actionMasked) {
             MotionEvent.ACTION_POINTER_DOWN -> {

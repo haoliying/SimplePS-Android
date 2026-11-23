@@ -42,13 +42,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private lateinit var info: TextView
     private var current: Bitmap? = null
+    private val history = mutableListOf<Bitmap>()
+    private var hidx = -1
     private var fonts: List<FontRenderer.FontInfo> = emptyList()
     private var analyzedStyle: TextStyle? = null
     private var sampleRect: Rect? = null
     private var placePoint: Pair<Int, Int>? = null
     private var currentTab = "bg"
     private lateinit var panel: LinearLayout
-    private lateinit var tabButtons: MutableMap<String, Button>
+    private lateinit var tabButtons: MutableMap<String, LinearLayout>
 
     // 控件引用
     private lateinit var toleranceBar: SeekBar
@@ -85,29 +87,38 @@ class MainActivity : AppCompatActivity() {
         }
         setContentView(root)
 
-        // 顶部标题栏
+        // 顶部操作栏（华为相册风格：返回箭头 + 标题 + 撤销/重做 + 保存）
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.rgb(28, 31, 38))
-            setPadding(dp(16), dp(12), dp(16), dp(12))
+            setBackgroundColor(Color.rgb(20, 20, 20))
+            setPadding(dp(14), dp(11), dp(14), dp(11))
             gravity = Gravity.CENTER_VERTICAL
         }
         header.addView(TextView(this).apply {
+            text = "‹"; textSize = 26f; setTextColor(MUTED)
+            setPadding(0, 0, dp(8), 0)
+        })
+        header.addView(TextView(this).apply {
             text = "SimplePS"
-            textSize = 19f
-            setTextColor(FG)
+            textSize = 17f; setTextColor(FG)
             setTypeface(null, android.graphics.Typeface.BOLD)
         })
         header.addView(TextView(this).apply {
-            text = "  图像工作室"
-            textSize = 12f
-            setTextColor(MUTED)
+            text = "  图片编辑"; textSize = 11f; setTextColor(MUTED)
         })
         header.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) })
-        header.addView(flatButton("打开") { pickImage.launch("image/*") })
-        header.addView(flatButton("保存") { saveCurrent() }, LinearLayout.LayoutParams(
+        header.addView(iconTextButton("↶", 20f) { undo() })
+        header.addView(iconTextButton("↷", 20f) { redo() })
+        header.addView(TextView(this).apply {
+            text = "保存"; textSize = 13f; setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.rgb(10, 132, 255))
+            setPadding(dp(18), dp(8), dp(18), dp(8))
+            setOnClickListener { saveCurrent() }
+        }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { leftMargin = dp(6) })
+        ).apply { leftMargin = dp(10) })
         root.addView(header, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
@@ -141,24 +152,44 @@ class MainActivity : AppCompatActivity() {
         root.addView(panelScroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(210)))
 
-        // 底部导航
+        // 底部图标工具栏（华为相册风格：图标 + 文字，选中高亮）
+        val navScroll = HorizontalScrollView(this).apply {
+            setBackgroundColor(Color.rgb(20, 20, 20))
+            isHorizontalScrollBarEnabled = false
+        }
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.rgb(24, 26, 32))
+            setBackgroundColor(Color.rgb(20, 20, 20))
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+            gravity = Gravity.CENTER_VERTICAL
         }
         tabButtons = LinkedHashMap()
-        for ((key, label) in listOf("bg" to "去背景", "cutout" to "抠图", "text" to "字体模仿", "transform" to "变换")) {
-            val btn = Button(this).apply {
-                text = label; textSize = 12f
-                setTextColor(MUTED)
-                setBackgroundColor(Color.TRANSPARENT)
-                setOnClickListener { switchTab(key) }
-            }
-            tabButtons[key] = btn
-            nav.addView(btn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        // 打开按钮固定在最左
+        nav.addView(navItem("⊕", "打开") { pickImage.launch("image/*") },
+            LinearLayout.LayoutParams(dp(66), dp(58)))
+        nav.addView(View(this).apply { setBackgroundColor(Color.rgb(58, 58, 60)) },
+            LinearLayout.LayoutParams(1, dp(36)).apply {
+                leftMargin = dp(6); topMargin = dp(10); bottomMargin = dp(10)
+            })
+        val tools = listOf(
+            "bg" to Triple("◐", "去背景", {}),
+            "cutout" to Triple("✂", "抠图", {}),
+            "text" to Triple("T", "文字", {}),
+            "crop" to Triple("▢", "裁剪", {}),
+            "rotate" to Triple("⟳", "旋转", {}),
+            "transform" to Triple("⤢", "变换", {}),
+        )
+        for ((key, t) in tools) {
+            val item = navItem(t.first, t.second) { switchTab(key) }
+            tabButtons[key] = item
+            nav.addView(item, LinearLayout.LayoutParams(dp(66), dp(58)))
         }
-        root.addView(nav, LinearLayout.LayoutParams(
+        navScroll.addView(nav)
+        root.addView(navScroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        // 无图片时点击画布直接选图
+        overlay.onEmptyClick = { pickImage.launch("image/*") }
 
         fonts = FontRenderer.availableFonts()
         switchTab("bg")
@@ -173,24 +204,56 @@ class MainActivity : AppCompatActivity() {
         setOnClickListener { click() }
     }
 
+    private fun iconTextButton(icon: String, size: Float, click: () -> Unit): TextView =
+        TextView(this).apply {
+            text = icon; textSize = size; setTextColor(FG)
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            setOnClickListener { click() }
+        }
+
+    /** 底部工具栏图标按钮：图标在上、文字在下。 */
+    private fun navItem(icon: String, label: String, click: () -> Unit): LinearLayout {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.TRANSPARENT)
+            setOnClickListener { click() }
+        }
+        val ic = TextView(this).apply {
+            text = icon; textSize = 20f; setTextColor(MUTED); gravity = Gravity.CENTER
+        }
+        val lb = TextView(this).apply {
+            text = label; textSize = 11f; setTextColor(MUTED); gravity = Gravity.CENTER
+        }
+        box.addView(ic)
+        box.addView(lb)
+        box.tag = Pair(ic, lb)
+        return box
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun setNavActive(item: LinearLayout, active: Boolean) {
+        val color = if (active) Color.rgb(10, 132, 255) else MUTED
+        val pair = item.tag as? Pair<TextView, TextView> ?: return
+        val ic = pair.first
+        val lb = pair.second
+        ic.setTextColor(color); lb.setTextColor(color)
+        lb.setTypeface(null, if (active) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+        item.setBackgroundColor(Color.TRANSPARENT)
+    }
+
     // ------------------------------------------------------------ 面板构建
     private fun switchTab(key: String) {
         currentTab = key
-        for ((k, b) in tabButtons) {
-            if (k == key) {
-                b.setTextColor(Color.WHITE)
-                b.setBackgroundColor(ACCENT)
-            } else {
-                b.setTextColor(MUTED)
-                b.setBackgroundColor(Color.TRANSPARENT)
-            }
-        }
+        for ((k, b) in tabButtons) setNavActive(b, k == key)
         panel.removeAllViews()
         overlay.mode = OverlayView.Mode.NONE
         when (key) {
             "bg" -> buildBgPanel()
             "cutout" -> buildCutoutPanel()
             "text" -> buildTextPanel()
+            "crop" -> buildCropPanel()
+            "rotate" -> buildRotatePanel()
             "transform" -> buildTransformPanel()
         }
     }
@@ -331,26 +394,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildTransformPanel() {
-        sectionTitle("图片变换")
+        sectionTitle("缩放 / 镜像")
         scaleBar = labeledSeek("缩放比例 (50% ~ 300%)", 250, 100) { setStatus("缩放 ${it + 50}%") }
         actionRow(
             "缩小 50%" to { applyTransform("缩放") { Transforms.scale(it, 0.5f) } },
             "放大 2×" to { applyTransform("缩放") { Transforms.scale(it, 2f) } },
             "按比例" to { applyTransform("缩放") { Transforms.scale(it, (scaleBar.progress + 50) / 100f) } },
         )
-        sectionTitle("旋转 / 翻转 / 裁剪")
-        rotateBar = labeledSeek("旋转角度 (-180° ~ 180°)", 360, 180) { setStatus("旋转 ${it - 180}°") }
-        actionRow(
-            "↶ 90°" to { applyTransform("旋转") { Transforms.rotate90(it, -1) } },
-            "↷ 90°" to { applyTransform("旋转") { Transforms.rotate90(it, 1) } },
-            "任意角" to { applyTransform("旋转") { Transforms.rotate(it, (rotateBar.progress - 180).toFloat()) } },
-        )
         actionRow(
             "⇋ 水平翻转" to { applyTransform("翻转") { Transforms.flip(it, true) } },
             "⇅ 垂直翻转" to { applyTransform("翻转") { Transforms.flip(it, false) } },
         )
+    }
+
+    private fun buildCropPanel() {
+        sectionTitle("裁剪")
+        hint("在画布上拖拽出矩形区域后点「应用裁剪」。")
         actionRow(
-            "▣ 框选裁剪区" to {
+            "▢ 框选裁剪区" to {
                 overlay.mode = OverlayView.Mode.RECT
                 overlay.onRectChanged = { r -> sampleRect = r }
                 setStatus("拖拽出裁剪区域后点「应用裁剪」")
@@ -360,6 +421,19 @@ class MainActivity : AppCompatActivity() {
                 if (r == null) toast("请先框选裁剪区域")
                 else applyTransform("裁剪") { Transforms.crop(it, Rect(r)) }
             },
+            "清除框选" to { overlay.clearMarks(); sampleRect = null; setStatus("已清除框选") },
+        )
+    }
+
+    private fun buildRotatePanel() {
+        sectionTitle("旋转")
+        actionRow(
+            "↶ 左转 90°" to { applyTransform("旋转") { Transforms.rotate90(it, -1) } },
+            "↷ 右转 90°" to { applyTransform("旋转") { Transforms.rotate90(it, 1) } },
+        )
+        rotateBar = labeledSeek("任意角度 (-180° ~ 180°)", 360, 180) { setStatus("旋转 ${it - 180}°") }
+        actionRow(
+            "应用旋转" to { applyTransform("旋转") { Transforms.rotate(it, (rotateBar.progress - 180).toFloat()) } },
         )
     }
 
@@ -377,6 +451,8 @@ class MainActivity : AppCompatActivity() {
                 MediaStore.Images.Media.getBitmap(contentResolver, uri)
             }
             val prepared = ImageProcessor.prepare(bmp)
+            history.clear(); hidx = -1
+            pushHistory(prepared)
             current = prepared
             overlay.setImage(prepared)
             info.text = "${prepared.width} x ${prepared.height}"
@@ -384,6 +460,31 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             toast("载入失败：${e.message}")
         }
+    }
+
+    private fun pushHistory(bmp: Bitmap) {
+        while (history.size > hidx + 1 && history.isNotEmpty()) history.removeAt(history.lastIndex)
+        history.add(bmp)
+        if (history.size > 30) history.removeAt(0)
+        hidx = history.size - 1
+    }
+
+    private fun undo() {
+        if (hidx <= 0) { toast("没有可撤销的操作"); return }
+        hidx--
+        current = history[hidx]
+        overlay.setResult(current!!)
+        info.text = "${current!!.width} x ${current!!.height}"
+        setStatus("已撤销")
+    }
+
+    private fun redo() {
+        if (hidx >= history.size - 1) { toast("没有可重做的操作"); return }
+        hidx++
+        current = history[hidx]
+        overlay.setResult(current!!)
+        info.text = "${current!!.width} x ${current!!.height}"
+        setStatus("已重做")
     }
 
     private fun process(name: String, block: (Bitmap) -> Bitmap) {
@@ -395,6 +496,7 @@ class MainActivity : AppCompatActivity() {
                 val out = block(src)
                 runOnUiThread {
                     current = out
+                    pushHistory(out)
                     overlay.setResult(out)
                     info.text = "${out.width} x ${out.height}"
                     setStatus("$name 完成")

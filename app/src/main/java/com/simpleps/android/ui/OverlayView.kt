@@ -27,6 +27,10 @@ class OverlayView @JvmOverloads constructor(
     var brushRadius = 24f
     var rect: Rect? = null
     var onRectChanged: ((Rect?) -> Unit)? = null
+    /** 矩形框选完成（手指抬起）时回调，用于松开即裁剪/抠图。 */
+    var onRectCommitted: ((Rect) -> Unit)? = null
+    /** 笔刷绘制完成（手指抬起）时回调，用于松开即抠图。 */
+    var onStrokeCommitted: (() -> Unit)? = null
     var onPlace: ((Int, Int) -> Unit)? = null
     /** 无图片时点击画布的回调（用于直接选择图片）。 */
     var onEmptyClick: (() -> Unit)? = null
@@ -87,6 +91,7 @@ class OverlayView @JvmOverloads constructor(
     fun enablePanMode() { mode = Mode.NONE; invalidate() }
 
     private fun dp(v: Int): Float = v * resources.displayMetrics.density
+    @Suppress("DEPRECATION")
     private fun sp(v: Int): Float = v * resources.displayMetrics.scaledDensity
 
     private fun resetView() { userScale = 1f; panX = 0f; panY = 0f }
@@ -99,7 +104,7 @@ class OverlayView @JvmOverloads constructor(
             var col = 0
             var x = dst.left
             while (x < dst.right) {
-                paint.color = if ((row + col) % 2 == 0) Color.rgb(42, 46, 55) else Color.rgb(30, 33, 40)
+                paint.color = if ((row + col) % 2 == 0) Color.rgb(38, 40, 62) else Color.rgb(26, 28, 50)
                 paint.style = Paint.Style.FILL
                 canvas.drawRect(x, y, min(x + cell, dst.right), min(y + cell, dst.bottom), paint)
                 x += cell; col++
@@ -110,46 +115,39 @@ class OverlayView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        canvas.drawColor(Color.rgb(18, 20, 26))
+        canvas.drawColor(Color.rgb(10, 15, 34))
         val src = source
         if (src == null) {
-            // 华为相册风格空状态：虚线框 + 加号圆圈 + 提示
-            val bw = (width * 0.72f).coerceAtMost(760f)
-            val bh = (height * 0.46f).coerceAtMost(460f)
-            val l = (width - bw) / 2f
-            val t = (height - bh) / 2f
-            val dashPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.rgb(70, 70, 76); style = Paint.Style.STROKE
-                strokeWidth = 3f
-            }
-            val dm = android.graphics.DashPathEffect(floatArrayOf(14f, 12f), 0f)
-            dashPaint.pathEffect = dm
-            canvas.drawRect(RectF(l, t, l + bw, t + bh), dashPaint)
-            dashPaint.pathEffect = null
-
+            // 极光空状态：霓虹渐变光环 + 加号 + 品牌提示
             val cx = width / 2f
-            val cy = t + bh / 2f - dp(28)
-            val circle = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.rgb(10, 132, 255); style = Paint.Style.STROKE; strokeWidth = 6f
+            val cy = height / 2f - dp(28)
+            val rings = listOf(
+                Triple(dp(96), Color.rgb(28, 42, 85), 2f),
+                Triple(dp(78), Color.rgb(42, 59, 114), 2f),
+                Triple(dp(60), Color.rgb(139, 92, 246), 4f),
+            )
+            for ((r, col, sw) in rings) {
+                canvas.drawCircle(cx, cy, r, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = col; style = Paint.Style.STROKE; strokeWidth = sw
+                })
             }
-            canvas.drawCircle(cx, cy, dp(38), circle)
             val plus = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.rgb(10, 132, 255); style = Paint.Style.STROKE
-                strokeWidth = 6f; strokeCap = Paint.Cap.ROUND
+                color = Color.rgb(34, 211, 238); style = Paint.Style.STROKE
+                strokeWidth = 9f; strokeCap = Paint.Cap.ROUND
             }
-            canvas.drawLine(cx - dp(18), cy, cx + dp(18), cy, plus)
-            canvas.drawLine(cx, cy - dp(18), cx, cy + dp(18), plus)
+            canvas.drawLine(cx - dp(20), cy, cx + dp(20), cy, plus)
+            canvas.drawLine(cx, cy - dp(20), cx, cy + dp(20), plus)
 
             val title = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.rgb(242, 242, 247); textSize = sp(17)
+                color = Color.rgb(238, 242, 255); textSize = sp(19)
                 textAlign = Paint.Align.CENTER; isFakeBoldText = true
             }
-            canvas.drawText("点击此处选择图片", cx, t + bh - dp(60), title)
+            canvas.drawText("点击此处，开启创作", cx, cy + dp(120), title)
             val sub = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.rgb(152, 152, 159); textSize = sp(12)
+                color = Color.rgb(154, 166, 206); textSize = sp(12)
                 textAlign = Paint.Align.CENTER
             }
-            canvas.drawText("支持 PNG / JPG / BMP / WebP", cx, t + bh - dp(30), sub)
+            canvas.drawText("选择图片 · 支持 PNG / JPG / BMP / WebP", cx, cy + dp(148), sub)
             return
         }
 
@@ -169,8 +167,8 @@ class OverlayView @JvmOverloads constructor(
 
         rect?.let { r ->
             paint.style = Paint.Style.STROKE
-            paint.color = Color.rgb(34, 195, 166)
-            paint.strokeWidth = 2.5f
+            paint.color = Color.rgb(34, 211, 238)
+            paint.strokeWidth = 3f
             canvas.drawRect(
                 RectF(ox + r.left * scale, oy + r.top * scale, ox + r.right * scale, oy + r.bottom * scale),
                 paint,
@@ -181,8 +179,8 @@ class OverlayView @JvmOverloads constructor(
             val px = ox + p.x * scale
             val py = oy + p.y * scale
             paint.style = Paint.Style.STROKE
-            paint.color = Color.rgb(79, 140, 255)
-            paint.strokeWidth = 2.5f
+            paint.color = Color.rgb(244, 114, 182)
+            paint.strokeWidth = 3f
             canvas.drawCircle(px, py, 12f, paint)
             canvas.drawLine(px - 20f, py, px + 20f, py, paint)
             canvas.drawLine(px, py - 20f, px, py + 20f, paint)
@@ -270,7 +268,13 @@ class OverlayView @JvmOverloads constructor(
                 panning = false
                 if (mode == Mode.RECT && rect != null) {
                     val r = rect!!
-                    if (r.width() < 6 || r.height() < 6) rect = null
+                    if (r.width() < 6 || r.height() < 6) {
+                        rect = null
+                    } else {
+                        onRectCommitted?.invoke(Rect(r))
+                    }
+                } else if ((mode == Mode.FG || mode == Mode.BG) && last != null) {
+                    onStrokeCommitted?.invoke()
                 }
                 last = null
                 invalidate()

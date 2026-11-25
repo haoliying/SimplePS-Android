@@ -51,6 +51,8 @@ class MainActivity : AppCompatActivity() {
     private var currentTab = "bg"
     private lateinit var panel: LinearLayout
     private lateinit var tabButtons: MutableMap<String, LinearLayout>
+    /** 当前矩形框选完成后要执行的动作（裁剪 / 抠图 / 文字采样）。 */
+    private var rectAction: ((Rect) -> Unit)? = null
 
     // 控件引用
     private lateinit var toleranceBar: SeekBar
@@ -64,22 +66,35 @@ class MainActivity : AppCompatActivity() {
     private lateinit var rotateBar: SeekBar
     private lateinit var scaleBar: SeekBar
 
-    private val BG = Color.rgb(18, 20, 26)
-    private val PANEL2 = Color.rgb(43, 47, 57)
-    private val CARD = Color.rgb(49, 54, 66)
-    private val FG = Color.rgb(232, 235, 242)
-    private val MUTED = Color.rgb(154, 163, 178)
-    private val ACCENT = Color.rgb(79, 140, 255)
-    private val ACCENT2 = Color.rgb(34, 195, 166)
+    // "极光"主题配色：深空蓝紫背景 + 青紫粉强调
+    private val BG = Color.rgb(10, 15, 34)
+    private val HEADER_TOP = Color.rgb(12, 19, 48)
+    private val HEADER_BOT = Color.rgb(36, 26, 69)
+    private val PANEL_BG = Color.rgb(13, 19, 41)
+    private val PANEL2 = Color.rgb(34, 46, 87)
+    private val CARD = Color.rgb(24, 33, 66)
+    private val FG = Color.rgb(238, 242, 255)
+    private val MUTED = Color.rgb(154, 166, 206)
+    private val ACCENT = Color.rgb(139, 92, 246)   // 紫
+    private val ACCENT_CYAN = Color.rgb(34, 211, 238) // 青
+    private val ACCENT2 = Color.rgb(52, 211, 153)  // 绿
+    private val ROSE = Color.rgb(244, 114, 182)    // 粉
 
     private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri?.let { loadImage(it) }
     }
 
+    /** 渐变背景 drawable（可带圆角）。 */
+    private fun gradientBg(top: Int, bottom: Int, radius: Float = 0f): android.graphics.drawable.GradientDrawable =
+        android.graphics.drawable.GradientDrawable(
+            android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(top, bottom)
+        ).apply { if (radius > 0f) cornerRadius = radius }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         supportActionBar?.hide()
-        window.statusBarColor = BG
+        @Suppress("DEPRECATION")
+        window.statusBarColor = HEADER_TOP
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -87,24 +102,24 @@ class MainActivity : AppCompatActivity() {
         }
         setContentView(root)
 
-        // 顶部操作栏（华为相册风格：返回箭头 + 标题 + 撤销/重做 + 保存）
+        // 顶部操作栏（极光渐变：品牌标识 + 撤销/重做 + 保存）
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.rgb(20, 20, 20))
-            setPadding(dp(14), dp(11), dp(14), dp(11))
+            background = gradientBg(HEADER_TOP, HEADER_BOT)
+            setPadding(dp(16), dp(12), dp(14), dp(12))
             gravity = Gravity.CENTER_VERTICAL
         }
         header.addView(TextView(this).apply {
-            text = "‹"; textSize = 26f; setTextColor(MUTED)
-            setPadding(0, 0, dp(8), 0)
+            text = "◈"; textSize = 24f; setTextColor(ACCENT_CYAN)
+            setPadding(0, 0, dp(6), 0)
         })
         header.addView(TextView(this).apply {
             text = "SimplePS"
-            textSize = 17f; setTextColor(FG)
+            textSize = 18f; setTextColor(FG)
             setTypeface(null, android.graphics.Typeface.BOLD)
         })
         header.addView(TextView(this).apply {
-            text = "  图片编辑"; textSize = 11f; setTextColor(MUTED)
+            text = "  极光编辑器"; textSize = 11f; setTextColor(MUTED)
         })
         header.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) })
         header.addView(iconTextButton("↶", 20f) { undo() })
@@ -113,8 +128,8 @@ class MainActivity : AppCompatActivity() {
             text = "保存"; textSize = 13f; setTextColor(Color.WHITE)
             setTypeface(null, android.graphics.Typeface.BOLD)
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.rgb(10, 132, 255))
-            setPadding(dp(18), dp(8), dp(18), dp(8))
+            background = gradientBg(ACCENT, ROSE, dp(12).toFloat())
+            setPadding(dp(18), dp(9), dp(18), dp(9))
             setOnClickListener { saveCurrent() }
         }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -142,34 +157,34 @@ class MainActivity : AppCompatActivity() {
         root.addView(status)
         root.addView(info)
 
-        // 工具面板（可滚动）
+        // 工具面板（极光玻璃卡片，可滚动）
         panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val panelScroll = ScrollView(this).apply {
-            setBackgroundColor(Color.rgb(28, 31, 38))
+            setBackgroundColor(PANEL_BG)
             addView(panel, ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         root.addView(panelScroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(210)))
 
-        // 底部图标工具栏（华为相册风格：图标 + 文字，选中高亮）
+        // 底部图标工具栏（悬浮胶囊：图标 + 文字，选中青色高亮）
         val navScroll = HorizontalScrollView(this).apply {
-            setBackgroundColor(Color.rgb(20, 20, 20))
+            setBackgroundColor(HEADER_BOT)
             isHorizontalScrollBarEnabled = false
         }
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.rgb(20, 20, 20))
-            setPadding(dp(8), dp(6), dp(8), dp(6))
+            background = gradientBg(CARD, PANEL2, dp(24).toFloat())
+            setPadding(dp(12), dp(8), dp(12), dp(8))
             gravity = Gravity.CENTER_VERTICAL
         }
         tabButtons = LinkedHashMap()
         // 打开按钮固定在最左
         nav.addView(navItem("⊕", "打开") { pickImage.launch("image/*") },
             LinearLayout.LayoutParams(dp(66), dp(58)))
-        nav.addView(View(this).apply { setBackgroundColor(Color.rgb(58, 58, 60)) },
-            LinearLayout.LayoutParams(1, dp(36)).apply {
-                leftMargin = dp(6); topMargin = dp(10); bottomMargin = dp(10)
+        nav.addView(View(this).apply { setBackgroundColor(PANEL2) },
+            LinearLayout.LayoutParams(2, dp(36)).apply {
+                leftMargin = dp(6); rightMargin = dp(4); topMargin = dp(10); bottomMargin = dp(10)
             })
         val tools = listOf(
             "bg" to Triple("◐", "去背景", {}),
@@ -184,9 +199,11 @@ class MainActivity : AppCompatActivity() {
             tabButtons[key] = item
             nav.addView(item, LinearLayout.LayoutParams(dp(66), dp(58)))
         }
-        navScroll.addView(nav)
-        root.addView(navScroll, LinearLayout.LayoutParams(
+        navScroll.addView(nav, ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(navScroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(0, dp(4), 0, dp(10)) })
 
         // 无图片时点击画布直接选图
         overlay.onEmptyClick = { pickImage.launch("image/*") }
@@ -200,8 +217,9 @@ class MainActivity : AppCompatActivity() {
     private fun flatButton(label: String, click: () -> Unit): Button = Button(this).apply {
         text = label; textSize = 12f
         setTextColor(FG)
-        setBackgroundColor(PANEL2)
+        background = gradientBg(PANEL2, CARD, dp(12).toFloat())
         setOnClickListener { click() }
+        isAllCaps = false
     }
 
     private fun iconTextButton(icon: String, size: Float, click: () -> Unit): TextView =
@@ -233,13 +251,13 @@ class MainActivity : AppCompatActivity() {
 
     @Suppress("UNCHECKED_CAST")
     private fun setNavActive(item: LinearLayout, active: Boolean) {
-        val color = if (active) Color.rgb(10, 132, 255) else MUTED
+        val color = if (active) ACCENT_CYAN else MUTED
         val pair = item.tag as? Pair<TextView, TextView> ?: return
         val ic = pair.first
         val lb = pair.second
         ic.setTextColor(color); lb.setTextColor(color)
         lb.setTypeface(null, if (active) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
-        item.setBackgroundColor(Color.TRANSPARENT)
+        item.background = if (active) gradientBg(CARD, PANEL2, dp(16).toFloat()) else null
     }
 
     // ------------------------------------------------------------ 面板构建
@@ -248,6 +266,9 @@ class MainActivity : AppCompatActivity() {
         for ((k, b) in tabButtons) setNavActive(b, k == key)
         panel.removeAllViews()
         overlay.mode = OverlayView.Mode.NONE
+        rectAction = null
+        overlay.onRectCommitted = { r -> rectAction?.invoke(r) }
+        overlay.onStrokeCommitted = null
         when (key) {
             "bg" -> buildBgPanel()
             "cutout" -> buildCutoutPanel()
@@ -261,7 +282,7 @@ class MainActivity : AppCompatActivity() {
     private fun sectionTitle(text: String) {
         panel.addView(TextView(this).apply {
             this.text = text
-            setTextColor(ACCENT2); textSize = 13f
+            setTextColor(ACCENT_CYAN); textSize = 13f
             setTypeface(null, android.graphics.Typeface.BOLD)
             setPadding(dp(14), dp(10), dp(14), dp(2))
         })
@@ -289,7 +310,9 @@ class MainActivity : AppCompatActivity() {
         panel.addView(row)
     }
 
-    private fun labeledSeek(label: String, max: Int, def: Int, onchange: ((Int) -> Unit)? = null): SeekBar {
+    private fun labeledSeek(label: String, max: Int, def: Int,
+                            onchange: ((Int) -> Unit)? = null,
+                            onStop: ((Int) -> Unit)? = null): SeekBar {
         panel.addView(TextView(this).apply {
             text = label; setTextColor(MUTED); textSize = 11f
             setPadding(dp(14), dp(4), dp(14), 0)
@@ -301,7 +324,7 @@ class MainActivity : AppCompatActivity() {
         bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(s: SeekBar?, p: Int, f: Boolean) { onchange?.invoke(p) }
             override fun onStartTrackingTouch(s: SeekBar?) {}
-            override fun onStopTrackingTouch(s: SeekBar?) {}
+            override fun onStopTrackingTouch(s: SeekBar?) { onStop?.invoke(bar.progress) }
         })
         panel.addView(bar, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -332,15 +355,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildCutoutPanel() {
-        sectionTitle("智能抠图")
+        sectionTitle("智能抠图 · 松开即生效")
         brushBar = labeledSeek("笔刷半径", 60, 24) { overlay.brushRadius = (it + 8).toFloat() }
         overlay.brushRadius = (brushBar.progress + 8).toFloat()
-        hint("选工具后在图上操作，再点「应用抠图」。")
+        hint("框选或涂抹后松开手指即刻抠图，无需点应用。")
+        // 矩形框选松开即抠图
+        rectAction = { r -> overlay.rect = r; applyCutout() }
+        // 笔刷涂抹松开即抠图
+        overlay.onStrokeCommitted = { applyCutout() }
         actionRow(
-            "矩形框选" to { overlay.mode = OverlayView.Mode.RECT; setStatus("拖拽框住主体") },
-            "前景笔刷" to { overlay.mode = OverlayView.Mode.FG; setStatus("绿色：保留区域") },
-            "背景笔刷" to { overlay.mode = OverlayView.Mode.BG; setStatus("红色：擦除区域") },
-            "应用抠图" to { applyCutout() },
+            "矩形框选" to { overlay.mode = OverlayView.Mode.RECT; setStatus("拖拽框住主体，松开即抠图") },
+            "前景笔刷" to { overlay.mode = OverlayView.Mode.FG; setStatus("绿色保留：涂抹后松开即抠图") },
+            "背景笔刷" to { overlay.mode = OverlayView.Mode.BG; setStatus("红色擦除：涂抹后松开即抠图") },
+            "清除标记" to { overlay.clearMarks(); setStatus("已清除标记") },
         )
     }
 
@@ -395,12 +422,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun buildTransformPanel() {
         sectionTitle("缩放 / 镜像")
-        scaleBar = labeledSeek("缩放比例 (50% ~ 300%)", 250, 100) { setStatus("缩放 ${it + 50}%") }
-        actionRow(
-            "缩小 50%" to { applyTransform("缩放") { Transforms.scale(it, 0.5f) } },
-            "放大 2×" to { applyTransform("缩放") { Transforms.scale(it, 2f) } },
-            "按比例" to { applyTransform("缩放") { Transforms.scale(it, (scaleBar.progress + 50) / 100f) } },
-        )
+        scaleBar = labeledSeek("缩放比例 (50% ~ 300%)", 250, 100,
+            { setStatus("缩放 ${it + 50}%  ·  松开即生效") },
+            { p -> applyTransform("缩放") { Transforms.scale(it, (p + 50) / 100f) } })
         actionRow(
             "⇋ 水平翻转" to { applyTransform("翻转") { Transforms.flip(it, true) } },
             "⇅ 垂直翻转" to { applyTransform("翻转") { Transforms.flip(it, false) } },
@@ -408,33 +432,42 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildCropPanel() {
-        sectionTitle("裁剪")
-        hint("在画布上拖拽出矩形区域后点「应用裁剪」。")
+        sectionTitle("裁剪 · 松开即生效")
+        hint("在画布上拖拽出矩形区域，松开手指即刻裁剪。")
+        rectAction = { r -> applyTransform("裁剪") { bmp -> Transforms.crop(bmp, Rect(r)) } }
         actionRow(
             "▢ 框选裁剪区" to {
                 overlay.mode = OverlayView.Mode.RECT
-                overlay.onRectChanged = { r -> sampleRect = r }
-                setStatus("拖拽出裁剪区域后点「应用裁剪」")
+                setStatus("拖拽出裁剪区域，松开即裁剪")
             },
-            "✂ 应用裁剪" to {
-                val r = sampleRect
-                if (r == null) toast("请先框选裁剪区域")
-                else applyTransform("裁剪") { Transforms.crop(it, Rect(r)) }
-            },
-            "清除框选" to { overlay.clearMarks(); sampleRect = null; setStatus("已清除框选") },
+            "1:1" to { cropRatio(1f) },
+            "4:3" to { cropRatio(4f / 3f) },
+            "16:9" to { cropRatio(16f / 9f) },
         )
     }
 
+    private fun cropRatio(ratio: Float) {
+        val bmp = current ?: run { toast("请先选择图片"); return }
+        val w = bmp.width; val h = bmp.height
+        val r = if (w.toFloat() / h > ratio) {
+            val nw = (h * ratio).toInt(); val x0 = (w - nw) / 2
+            Rect(x0, 0, x0 + nw, h)
+        } else {
+            val nh = (w / ratio).toInt(); val y0 = (h - nh) / 2
+            Rect(0, y0, w, y0 + nh)
+        }
+        applyTransform("裁剪") { Transforms.crop(it, r) }
+    }
+
     private fun buildRotatePanel() {
-        sectionTitle("旋转")
+        sectionTitle("旋转 · 松开即生效")
         actionRow(
             "↶ 左转 90°" to { applyTransform("旋转") { Transforms.rotate90(it, -1) } },
             "↷ 右转 90°" to { applyTransform("旋转") { Transforms.rotate90(it, 1) } },
         )
-        rotateBar = labeledSeek("任意角度 (-180° ~ 180°)", 360, 180) { setStatus("旋转 ${it - 180}°") }
-        actionRow(
-            "应用旋转" to { applyTransform("旋转") { Transforms.rotate(it, (rotateBar.progress - 180).toFloat()) } },
-        )
+        rotateBar = labeledSeek("任意角度 (-180° ~ 180°)", 360, 180,
+            { setStatus("旋转 ${it - 180}°  ·  松开即生效") },
+            { p -> applyTransform("旋转") { Transforms.rotate(it, (p - 180).toFloat()) } })
     }
 
     // ------------------------------------------------------------ 业务逻辑

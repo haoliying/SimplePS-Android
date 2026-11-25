@@ -14,6 +14,8 @@ import kotlin.math.sqrt
 object ImageProcessor {
 
     private const val MAX_SIDE = 1400
+    /** 去背景算法的计算边长：在缩略图上算 alpha 再放大，显著提速。 */
+    private const val WORK_SIDE = 900
 
     /** 限制图片边长，避免大图导致内存与速度问题。 */
     fun prepare(src: Bitmap): Bitmap {
@@ -26,6 +28,21 @@ object ImageProcessor {
             max(1, (src.height * s).toInt()),
             true,
         )
+    }
+
+    /**
+     * 在受限边长的缩略图上运行耗时算法，再把结果放大回原尺寸。
+     * 颜色去背景/自动去背景的 alpha 边缘经双线性放大后依然自然，
+     * 但计算量从 O(MAX_SIDE^2) 降到 O(WORK_SIDE^2)，通常快 2 倍以上。
+     */
+    private fun onWorkSize(src: Bitmap, block: (Bitmap) -> Bitmap): Bitmap {
+        val m = max(src.width, src.height)
+        if (m <= WORK_SIDE) return block(src)
+        val s = WORK_SIDE.toFloat() / m
+        val small = Bitmap.createScaledBitmap(
+            src, max(1, (src.width * s).toInt()), max(1, (src.height * s).toInt()), true)
+        val out = block(small)
+        return Bitmap.createScaledBitmap(out, src.width, src.height, true)
     }
 
     private fun distance(r1: Int, g1: Int, b1: Int, r2: Int, g2: Int, b2: Int): Float {
@@ -86,23 +103,26 @@ object ImageProcessor {
 
     private fun colorOf(c: Int): IntArray = intArrayOf(Color.red(c), Color.green(c), Color.blue(c))
 
-    /** 按采样颜色去背景，适合纯色 / 渐变背景。 */
+    /** 按采样颜色去背景，适合纯色 / 渐变背景（缩略图加速）。 */
     fun removeByColor(
         src: Bitmap,
         samples: List<Pair<Int, Int>>,
         tolerance: Float = 45f,
         softness: Float = 14f,
-    ): Bitmap {
-        val bmp = src
+    ): Bitmap = onWorkSize(src) { bmp ->
         val w = bmp.width
         val h = bmp.height
         val px = pixels(bmp)
-        val cols = samples.map { (x, y) ->
+        // 采样点来自原图坐标，按比例映射到缩略图
+        val sx = w.toFloat() / src.width
+        val sy = h.toFloat() / src.height
+        val mappedSamples = samples.map { (x, y) -> (x * sx).toInt() to (y * sy).toInt() }
+        val cols = mappedSamples.map { (x, y) ->
             val xx = x.coerceIn(0, w - 1)
             val yy = y.coerceIn(0, h - 1)
             colorOf(px[yy * w + xx])
         }
-        if (cols.isEmpty()) return bmp.copy(Bitmap.Config.ARGB_8888, true)
+        if (cols.isEmpty()) return@onWorkSize bmp.copy(Bitmap.Config.ARGB_8888, true)
 
         val alpha = IntArray(px.size)
         for (y in 0 until h) {
@@ -116,12 +136,11 @@ object ImageProcessor {
                 alpha[i] = alphaFromDistance(d, tolerance, softness)
             }
         }
-        return compose(bmp, feather(alpha, w, h))
+        compose(bmp, feather(alpha, w, h))
     }
 
-    /** 自动去背景：边缘颜色聚类 + 从边框区域生长，避免误删同色主体。 */
-    fun autoRemoveBackground(src: Bitmap, tolerance: Float = 48f): Bitmap {
-        val bmp = src
+    /** 自动去背景：边缘颜色聚类 + 从边框区域生长（缩略图加速）。 */
+    fun autoRemoveBackground(src: Bitmap, tolerance: Float = 48f): Bitmap = onWorkSize(src) { bmp ->
         val w = bmp.width
         val h = bmp.height
         val px = pixels(bmp)
@@ -149,7 +168,7 @@ object ImageProcessor {
                     (key and 31) * 8 + 4,
                 )
             }
-        if (centers.isEmpty()) return bmp.copy(Bitmap.Config.ARGB_8888, true)
+        if (centers.isEmpty()) return@onWorkSize bmp.copy(Bitmap.Config.ARGB_8888, true)
 
         val dist = FloatArray(px.size)
         for (y in 0 until h) {
@@ -187,7 +206,7 @@ object ImageProcessor {
         }
 
         val alpha = IntArray(px.size) { if (bg[it]) 0 else 255 }
-        return compose(bmp, feather(alpha, w, h))
+        compose(bmp, feather(alpha, w, h))
     }
 
     /** 矩形抠图：框外为背景，框内按与框外/框内颜色相似度分类。 */

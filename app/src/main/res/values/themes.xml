@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
     <style name="Theme.SimplePS" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <item name="colorPrimary">#2563EB</item>
-        <item name="colorPrimaryDark">#12141A</item>
-        <item name="colorAccent">#22C3A6</item>
-        <item name="android:windowBackground">#12141A</item>
-        <item name="android:statusBarColor">#12141A</item>
+        <item name="colorPrimary">#8B5CF6</item>
+        <item name="colorPrimaryDark">#0C1330</item>
+        <item name="colorAccent">#22D3EE</item>
+        <item name="android:windowBackground">#0A0F22</item>
+        <item name="android:statusBarColor">#0C1330</item>
         <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
     </style>
 </resources>
